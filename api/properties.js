@@ -4,7 +4,7 @@
 const xml2js = require('xml2js');
 
 // Your Vebra API credentials
-// IMPORTANT: Verify these match EXACTLY from your email
+// IMPORTANT: Verify these match EXACTLY from your emailo
 const VEBRA_CONFIG = {
   username: 'PropLinkEst11UHxml',  // From: USERNAME:  PropLinkEst11UHxml
   password: 'y9y4Djx38r1Qaxa',     // From: PASSWORD:  y9y4Djx38r1Qaxa
