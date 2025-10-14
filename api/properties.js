@@ -11,6 +11,12 @@ const VEBRA_CONFIG = {
   baseUrl: 'http://webservices.vebra.com/export/PropertyLEAPI/v10'
 };
 
+// Branch mapping - branchId to clientId
+const BRANCH_MAP = {
+  '1': '33273', // Lettings
+  '2': '41620'  // Sales
+};
+
 // Token storage (in production, use Redis or similar)
 let tokenCache = {
   token: null,
@@ -21,9 +27,11 @@ let tokenCache = {
 async function getToken() {
   // Check if we have a valid cached token
   if (tokenCache.token && tokenCache.expires > Date.now()) {
+    console.log('Using cached token');
     return tokenCache.token;
   }
 
+  console.log('Requesting new token...');
   const url = `${VEBRA_CONFIG.baseUrl}/branch`;
   const credentials = Buffer.from(`${VEBRA_CONFIG.username}:${VEBRA_CONFIG.password}`).toString('base64');
 
@@ -35,17 +43,21 @@ async function getToken() {
       }
     });
 
+    console.log('Token response status:', response.status);
+
     // Get token from response headers
-    const token = response.headers.get('Token');
+    const token = response.headers.get('token') || response.headers.get('Token');
     
     if (token) {
-      // Cache token (expires in 55 minutes to be safe)
+      // Store token as base64 encoded
       tokenCache.token = Buffer.from(token).toString('base64');
-      tokenCache.expires = Date.now() + (55 * 60 * 1000);
+      tokenCache.expires = Date.now() + (55 * 60 * 1000); // 55 minutes
+      console.log('Token received and cached');
       return tokenCache.token;
     }
     
-    throw new Error('No token received');
+    console.error('No token in headers. Headers:', Object.fromEntries(response.headers.entries()));
+    throw new Error('No token received from API');
   } catch (error) {
     console.error('Token error:', error);
     throw error;
@@ -57,6 +69,8 @@ async function fetchVebraData(endpoint) {
   const token = await getToken();
   const url = `${VEBRA_CONFIG.baseUrl}${endpoint}`;
 
+  console.log('Fetching:', url);
+
   const response = await fetch(url, {
     method: 'GET',
     headers: {
@@ -64,15 +78,36 @@ async function fetchVebraData(endpoint) {
     }
   });
 
+  console.log('Response status:', response.status);
+
   if (response.status === 401) {
-    // Token expired, clear cache and retry
+    console.log('Token expired, clearing cache and retrying...');
+    // Token expired, clear cache and retry once
     tokenCache.token = null;
     tokenCache.expires = null;
-    return fetchVebraData(endpoint);
+    
+    // Retry once
+    const newToken = await getToken();
+    const retryResponse = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${newToken}`
+      }
+    });
+    
+    if (!retryResponse.ok) {
+      throw new Error(`API error after retry: ${retryResponse.status}`);
+    }
+    
+    const xmlData = await retryResponse.text();
+    const parser = new xml2js.Parser({ explicitArray: false });
+    return await parser.parseStringPromise(xmlData);
   }
 
   if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
+    const errorText = await response.text();
+    console.error('API Error:', errorText);
+    throw new Error(`API error: ${response.status} - ${errorText}`);
   }
 
   const xmlData = await response.text();
@@ -98,6 +133,8 @@ export default async function handler(req, res) {
   try {
     const { endpoint, branchId, propertyId } = req.query;
 
+    console.log('Request:', { endpoint, branchId, propertyId });
+
     let data;
 
     switch (endpoint) {
@@ -109,9 +146,17 @@ export default async function handler(req, res) {
       case 'properties':
         // Get properties for a specific branch
         if (!branchId) {
-          return res.status(400).json({ error: 'branchId required' });
+          return res.status(400).json({ error: 'branchId required (1 for Lettings, 2 for Sales)' });
         }
-        data = await fetchVebraData(`/branch/${branchId}/property`);
+        
+        // Map branchId to clientId
+        const clientId = BRANCH_MAP[branchId];
+        if (!clientId) {
+          return res.status(400).json({ error: 'Invalid branchId. Use 1 for Lettings or 2 for Sales' });
+        }
+        
+        console.log(`Fetching properties for branch ${branchId} (client ${clientId})`);
+        data = await fetchVebraData(`/branch/${clientId}/property`);
         break;
 
       case 'property':
@@ -131,7 +176,10 @@ export default async function handler(req, res) {
         break;
 
       default:
-        return res.status(400).json({ error: 'Invalid endpoint' });
+        return res.status(400).json({ 
+          error: 'Invalid endpoint',
+          available: ['branches', 'properties', 'property', 'property-files']
+        });
     }
 
     return res.status(200).json(data);
@@ -140,7 +188,8 @@ export default async function handler(req, res) {
     console.error('API Error:', error);
     return res.status(500).json({ 
       error: 'Failed to fetch data',
-      message: error.message 
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 }
