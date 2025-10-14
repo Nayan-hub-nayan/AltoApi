@@ -4,11 +4,10 @@
 const xml2js = require('xml2js');
 
 // Your Vebra API credentials
-// IMPORTANT: Verify these match EXACTLY from your emailo
 const VEBRA_CONFIG = {
-  username: 'PropLinkEst11UHxml',  // From: USERNAME:  PropLinkEst11UHxml
-  password: 'y9y4Djx38r1Qaxa',     // From: PASSWORD:  y9y4Djx38r1Qaxa
-  datafeedId: 'PropertyLEAPI',      // From email - if wrong, try 'PLEQTAPI'
+  username: 'PropLinkEst11UHxml',
+  password: 'y9y4Djx38r1Qaxa',
+  datafeedId: 'PropertyLEAPI',
   baseUrl: 'http://webservices.vebra.com/export/PropertyLEAPI/v10'
 };
 
@@ -67,10 +66,10 @@ async function getToken() {
                   response.headers.get('X-Token');
     
     if (token) {
-      // Store token directly (it's already the token we need)
-      tokenCache.token = token;
+      // Store token as base64 encoded
+      tokenCache.token = Buffer.from(token).toString('base64');
       tokenCache.expires = Date.now() + (55 * 60 * 1000); // 55 minutes
-      console.log('Token received and cached:', token);
+      console.log('Token received and cached');
       return tokenCache.token;
     }
     
@@ -88,15 +87,11 @@ async function fetchVebraData(endpoint) {
   const url = `${VEBRA_CONFIG.baseUrl}${endpoint}`;
 
   console.log('Fetching:', url);
-  console.log('Using token:', token);
-
-  // Encode the token for Basic Auth
-  const encodedToken = Buffer.from(token + ':').toString('base64');
 
   const response = await fetch(url, {
     method: 'GET',
     headers: {
-      'Authorization': `Basic ${encodedToken}`
+      'Authorization': `Basic ${token}`
     }
   });
 
@@ -110,12 +105,10 @@ async function fetchVebraData(endpoint) {
     
     // Retry once
     const newToken = await getToken();
-    const newEncodedToken = Buffer.from(newToken + ':').toString('base64');
-    
     const retryResponse = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': `Basic ${newEncodedToken}`
+        'Authorization': `Basic ${newToken}`
       }
     });
     
@@ -162,29 +155,6 @@ export default async function handler(req, res) {
     let data;
 
     switch (endpoint) {
-      case 'test-credentials':
-        // Test endpoint to verify credentials
-        const testUrl = `${VEBRA_CONFIG.baseUrl}/branch`;
-        const testCreds = Buffer.from(`${VEBRA_CONFIG.username}:${VEBRA_CONFIG.password}`).toString('base64');
-        
-        const testResponse = await fetch(testUrl, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Basic ${testCreds}`
-          }
-        });
-        
-        return res.status(200).json({
-          status: testResponse.status,
-          statusText: testResponse.statusText,
-          headers: Object.fromEntries(testResponse.headers.entries()),
-          credentials: {
-            username: VEBRA_CONFIG.username,
-            passwordLength: VEBRA_CONFIG.password.length,
-            datafeedId: VEBRA_CONFIG.datafeedId
-          }
-        });
-
       case 'branches':
         // Get list of branches
         data = await fetchVebraData('/branch');
