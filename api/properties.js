@@ -4,9 +4,10 @@
 const xml2js = require('xml2js');
 
 // Your Vebra API credentials
+// IMPORTANT: Verify these match EXACTLY from your email
 const VEBRA_CONFIG = {
-  username: 'PropLinkEst11UHxml',
-  password: 'y9y4Djx38r1Qaxa',
+  username: 'PropLinkEst11UHxml',  // CHECK: No spaces before/after
+  password: 'y9y4Djx38r1Qaxa',     // CHECK: No spaces, exact case
   datafeedId: 'PropertyLEAPI',
   baseUrl: 'http://webservices.vebra.com/export/PropertyLEAPI/v10'
 };
@@ -155,6 +156,29 @@ export default async function handler(req, res) {
     let data;
 
     switch (endpoint) {
+      case 'test-credentials':
+        // Test endpoint to verify credentials
+        const testUrl = `${VEBRA_CONFIG.baseUrl}/branch`;
+        const testCreds = Buffer.from(`${VEBRA_CONFIG.username}:${VEBRA_CONFIG.password}`).toString('base64');
+        
+        const testResponse = await fetch(testUrl, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Basic ${testCreds}`
+          }
+        });
+        
+        return res.status(200).json({
+          status: testResponse.status,
+          statusText: testResponse.statusText,
+          headers: Object.fromEntries(testResponse.headers.entries()),
+          credentials: {
+            username: VEBRA_CONFIG.username,
+            passwordLength: VEBRA_CONFIG.password.length,
+            datafeedId: VEBRA_CONFIG.datafeedId
+          }
+        });
+
       case 'branches':
         // Get list of branches
         data = await fetchVebraData('/branch');
