@@ -6,9 +6,9 @@ const xml2js = require('xml2js');
 // Your Vebra API credentials
 // IMPORTANT: Verify these match EXACTLY from your email
 const VEBRA_CONFIG = {
-  username: 'PropLinkEst11UHxml',  // CHECK: No spaces before/after
-  password: 'y9y4Djx38r1Qaxa',     // CHECK: No spaces, exact case
-  datafeedId: 'PropertyLEAPI',
+  username: 'PropLinkEst11UHxml',  // From: USERNAME:  PropLinkEst11UHxml
+  password: 'y9y4Djx38r1Qaxa',     // From: PASSWORD:  y9y4Djx38r1Qaxa
+  datafeedId: 'PropertyLEAPI',      // From email - if wrong, try 'PLEQTAPI'
   baseUrl: 'http://webservices.vebra.com/export/PropertyLEAPI/v10'
 };
 
@@ -67,10 +67,10 @@ async function getToken() {
                   response.headers.get('X-Token');
     
     if (token) {
-      // Store token as base64 encoded
-      tokenCache.token = Buffer.from(token).toString('base64');
+      // Store token directly (it's already the token we need)
+      tokenCache.token = token;
       tokenCache.expires = Date.now() + (55 * 60 * 1000); // 55 minutes
-      console.log('Token received and cached');
+      console.log('Token received and cached:', token);
       return tokenCache.token;
     }
     
@@ -88,11 +88,15 @@ async function fetchVebraData(endpoint) {
   const url = `${VEBRA_CONFIG.baseUrl}${endpoint}`;
 
   console.log('Fetching:', url);
+  console.log('Using token:', token);
+
+  // Encode the token for Basic Auth
+  const encodedToken = Buffer.from(token + ':').toString('base64');
 
   const response = await fetch(url, {
     method: 'GET',
     headers: {
-      'Authorization': `Basic ${token}`
+      'Authorization': `Basic ${encodedToken}`
     }
   });
 
@@ -106,10 +110,12 @@ async function fetchVebraData(endpoint) {
     
     // Retry once
     const newToken = await getToken();
+    const newEncodedToken = Buffer.from(newToken + ':').toString('base64');
+    
     const retryResponse = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': `Basic ${newToken}`
+        'Authorization': `Basic ${newEncodedToken}`
       }
     });
     
