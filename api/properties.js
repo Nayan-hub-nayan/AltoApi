@@ -54,8 +54,7 @@ async function getToken() {
 
     // If 401, credentials are wrong
     if (response.status === 401) {
-      const body = await response.text();
-      console.error('Authentication failed. Response body:', body);
+      console.error('Authentication failed. Status:', response.status);
       throw new Error('Authentication failed - please check username and password');
     }
 
@@ -168,6 +167,10 @@ export default async function handler(req, res) {
         const testUrl = `${VEBRA_CONFIG.baseUrl}/branch`;
         const testCreds = Buffer.from(`${VEBRA_CONFIG.username}:${VEBRA_CONFIG.password}`).toString('base64');
         
+        console.log('Testing credentials...');
+        console.log('URL:', testUrl);
+        console.log('Username:', VEBRA_CONFIG.username);
+        
         const testResponse = await fetch(testUrl, {
           method: 'GET',
           headers: {
@@ -175,10 +178,15 @@ export default async function handler(req, res) {
           }
         });
         
+        const allHeaders = Object.fromEntries(testResponse.headers.entries());
+        const hasToken = !!testResponse.headers.get('token');
+        
         return res.status(200).json({
           status: testResponse.status,
           statusText: testResponse.statusText,
-          headers: Object.fromEntries(testResponse.headers.entries()),
+          hasToken: hasToken,
+          token: hasToken ? testResponse.headers.get('token') : null,
+          headers: allHeaders,
           credentials: {
             username: VEBRA_CONFIG.username,
             passwordLength: VEBRA_CONFIG.password.length,
