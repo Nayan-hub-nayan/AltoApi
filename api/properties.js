@@ -90,8 +90,9 @@ async function fetchVebraData(endpoint) {
   console.log('Fetching:', url);
   console.log('Using token:', token);
 
-  // Encode the token for Basic Auth
-  const encodedToken = Buffer.from(token + ':').toString('base64');
+  // The Vebra API expects the token in the Authorization header
+  // Format: Basic base64(token:) - note the colon with empty password
+  const encodedToken = Buffer.from(`${token}:`).toString('base64');
 
   const response = await fetch(url, {
     method: 'GET',
