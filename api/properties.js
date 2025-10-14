@@ -4,9 +4,10 @@
 const xml2js = require('xml2js');
 
 // Your Vebra API credentials
+// IMPORTANT: Verify these match EXACTLY from your email
 const VEBRA_CONFIG = {
-  username: 'PropLinkEst11UHxml',
-  password: 'y9y4Djx38r1Qaxa',
+  username: 'PropLinkEst11UHxml',  // CHECK: No spaces before/after
+  password: 'y9y4Djx38r1Qaxa',     // CHECK: No spaces, exact case
   datafeedId: 'PropertyLEAPI',
   baseUrl: 'http://webservices.vebra.com/export/PropertyLEAPI/v10'
 };
@@ -32,8 +33,13 @@ async function getToken() {
   }
 
   console.log('Requesting new token...');
+  console.log('Username:', VEBRA_CONFIG.username);
+  console.log('Password length:', VEBRA_CONFIG.password.length);
+  
   const url = `${VEBRA_CONFIG.baseUrl}/branch`;
   const credentials = Buffer.from(`${VEBRA_CONFIG.username}:${VEBRA_CONFIG.password}`).toString('base64');
+  
+  console.log('Auth string (base64):', credentials);
 
   try {
     const response = await fetch(url, {
@@ -44,9 +50,21 @@ async function getToken() {
     });
 
     console.log('Token response status:', response.status);
+    console.log('Response headers:', Object.fromEntries(response.headers.entries()));
 
-    // Get token from response headers
-    const token = response.headers.get('token') || response.headers.get('Token');
+    // If 401, credentials are wrong
+    if (response.status === 401) {
+      const body = await response.text();
+      console.error('Authentication failed. Response body:', body);
+      throw new Error('Authentication failed - please check username and password');
+    }
+
+    // Get token from response headers (check multiple possible header names)
+    const token = response.headers.get('token') || 
+                  response.headers.get('Token') || 
+                  response.headers.get('TOKEN') ||
+                  response.headers.get('x-token') ||
+                  response.headers.get('X-Token');
     
     if (token) {
       // Store token as base64 encoded
@@ -56,8 +74,8 @@ async function getToken() {
       return tokenCache.token;
     }
     
-    console.error('No token in headers. Headers:', Object.fromEntries(response.headers.entries()));
-    throw new Error('No token received from API');
+    console.error('No token in any header. All headers:', Object.fromEntries(response.headers.entries()));
+    throw new Error('No token received from API - authentication may have succeeded but no token was returned');
   } catch (error) {
     console.error('Token error:', error);
     throw error;
@@ -138,6 +156,29 @@ export default async function handler(req, res) {
     let data;
 
     switch (endpoint) {
+      case 'test-credentials':
+        // Test endpoint to verify credentials
+        const testUrl = `${VEBRA_CONFIG.baseUrl}/branch`;
+        const testCreds = Buffer.from(`${VEBRA_CONFIG.username}:${VEBRA_CONFIG.password}`).toString('base64');
+        
+        const testResponse = await fetch(testUrl, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Basic ${testCreds}`
+          }
+        });
+        
+        return res.status(200).json({
+          status: testResponse.status,
+          statusText: testResponse.statusText,
+          headers: Object.fromEntries(testResponse.headers.entries()),
+          credentials: {
+            username: VEBRA_CONFIG.username,
+            passwordLength: VEBRA_CONFIG.password.length,
+            datafeedId: VEBRA_CONFIG.datafeedId
+          }
+        });
+
       case 'branches':
         // Get list of branches
         data = await fetchVebraData('/branch');
