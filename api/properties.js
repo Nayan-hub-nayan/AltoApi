@@ -67,10 +67,10 @@ async function getToken() {
                   response.headers.get('X-Token');
     
     if (token) {
-      // Store token directly (it's already the token we need)
-      tokenCache.token = token;
+      // Store token as base64 encoded
+      tokenCache.token = Buffer.from(token).toString('base64');
       tokenCache.expires = Date.now() + (55 * 60 * 1000); // 55 minutes
-      console.log('Token received and cached:', token);
+      console.log('Token received and cached');
       return tokenCache.token;
     }
     
@@ -88,16 +88,11 @@ async function fetchVebraData(endpoint) {
   const url = `${VEBRA_CONFIG.baseUrl}${endpoint}`;
 
   console.log('Fetching:', url);
-  console.log('Using token:', token);
-
-  // The Vebra API expects the token in the Authorization header
-  // Format: Basic base64(token:) - note the colon with empty password
-  const encodedToken = Buffer.from(`${token}:`).toString('base64');
 
   const response = await fetch(url, {
     method: 'GET',
     headers: {
-      'Authorization': `Basic ${encodedToken}`
+      'Authorization': `Basic ${token}`
     }
   });
 
@@ -111,12 +106,10 @@ async function fetchVebraData(endpoint) {
     
     // Retry once
     const newToken = await getToken();
-    const newEncodedToken = Buffer.from(newToken + ':').toString('base64');
-    
     const retryResponse = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': `Basic ${newEncodedToken}`
+        'Authorization': `Basic ${newToken}`
       }
     });
     
