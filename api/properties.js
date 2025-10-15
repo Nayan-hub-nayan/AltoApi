@@ -4,11 +4,17 @@
 const xml2js = require('xml2js');
 
 // Your Vebra API credentials
-// IMPORTANT: Verify these match EXACTLY from your email
+// TRY BOTH SETS - You provided two different credentials
 const VEBRA_CONFIG = {
-  username: 'PropLinkEst11UHxml',  // From: USERNAME:  PropLinkEst11UHxml
-  password: 'y9y4Djx38r1Qaxa',     // From: PASSWORD:  y9y4Djx38r1Qaxa
-  datafeedId: 'PropertyLEAPI',      // From email - if wrong, try 'PLEQTAPI'
+  // OPTION 1: From email (current)
+  username: 'PropLinkEst11UHxml',  
+  password: 'y9y4Djx38r1Qaxa',     
+  
+  // OPTION 2: From first message (uncomment to try)
+  // username: 'PLE35098',
+  // password: 'X4h~srCfU5',
+  
+  datafeedId: 'PropertyLEAPI',      
   baseUrl: 'http://webservices.vebra.com/export/PropertyLEAPI/v10'
 };
 
@@ -18,18 +24,28 @@ const BRANCH_MAP = {
   '2': '41620'  // Sales
 };
 
-// Token storage (in production, use Redis or similar)
+// Token storage - persists across function calls in same instance
+// Note: Vercel serverless functions may restart, losing this cache
 let tokenCache = {
   token: null,
-  expires: null
+  expires: null,
+  lastError: null,
+  lastErrorTime: null
 };
 
 // Function to get authentication token
 async function getToken() {
   // Check if we have a valid cached token
   if (tokenCache.token && tokenCache.expires > Date.now()) {
-    console.log('Using cached token');
+    console.log('Using cached token (valid until:', new Date(tokenCache.expires).toISOString(), ')');
     return tokenCache.token;
+  }
+
+  // Check if we recently got a 401 (within last 5 minutes) - don't retry immediately
+  if (tokenCache.lastError && tokenCache.lastErrorTime && 
+      (Date.now() - tokenCache.lastErrorTime) < 5 * 60 * 1000) {
+    console.log('Recently got 401 error, token may still be active on server');
+    throw new Error('Token request failed recently. An active token may exist on the Vebra server. Please wait 5 minutes before retrying.');
   }
 
   console.log('Requesting new token...');
@@ -52,10 +68,16 @@ async function getToken() {
     console.log('Token response status:', response.status);
     console.log('Response headers:', Object.fromEntries(response.headers.entries()));
 
-    // If 401, credentials are wrong
+    // If 401, there might be an active token already
     if (response.status === 401) {
       console.error('Authentication failed. Status:', response.status);
-      throw new Error('Authentication failed - please check username and password');
+      console.error('This might mean there is already an active token on the Vebra server');
+      
+      // Store the error time to prevent rapid retries
+      tokenCache.lastError = '401 Unauthorized';
+      tokenCache.lastErrorTime = Date.now();
+      
+      throw new Error('Authentication failed - there may be an active token already. Vebra API only allows one token request per hour.');
     }
 
     // Get token from response headers (check multiple possible header names)
@@ -69,7 +91,10 @@ async function getToken() {
       // Store token directly (it's already the token we need)
       tokenCache.token = token;
       tokenCache.expires = Date.now() + (55 * 60 * 1000); // 55 minutes
+      tokenCache.lastError = null;
+      tokenCache.lastErrorTime = null;
       console.log('Token received and cached:', token);
+      console.log('Token expires at:', new Date(tokenCache.expires).toISOString());
       return tokenCache.token;
     }
     
@@ -162,6 +187,62 @@ export default async function handler(req, res) {
     let data;
 
     switch (endpoint) {
+      case 'test-all-credentials':
+        // Test multiple credential combinations
+        const credentialSets = [
+          {
+            name: 'Email credentials with PropertyLEAPI',
+            username: 'PropLinkEst11UHxml',
+            password: 'y9y4Djx38r1Qaxa',
+            datafeedId: 'PropertyLEAPI',
+            url: 'http://webservices.vebra.com/export/PropertyLEAPI/v10/branch'
+          },
+          {
+            name: 'First message credentials with PLEQTAPI',
+            username: 'PLE35098',
+            password: 'X4h~srCfU5',
+            datafeedId: 'PLEQTAPI',
+            url: 'http://webservices.vebra.com/export/PLEQTAPI/v10/branch'
+          },
+          {
+            name: 'Email credentials with PLEQTAPI',
+            username: 'PropLinkEst11UHxml',
+            password: 'y9y4Djx38r1Qaxa',
+            datafeedId: 'PLEQTAPI',
+            url: 'http://webservices.vebra.com/export/PLEQTAPI/v10/branch'
+          }
+        ];
+        
+        const results = [];
+        
+        for (const creds of credentialSets) {
+          const testCreds = Buffer.from(`${creds.username}:${creds.password}`).toString('base64');
+          
+          try {
+            const testResp = await fetch(creds.url, {
+              method: 'GET',
+              headers: {
+                'Authorization': `Basic ${testCreds}`
+              }
+            });
+            
+            results.push({
+              name: creds.name,
+              status: testResp.status,
+              hasToken: !!testResp.headers.get('token'),
+              token: testResp.headers.get('token')?.substring(0, 20) + '...',
+              url: creds.url
+            });
+          } catch (error) {
+            results.push({
+              name: creds.name,
+              error: error.message
+            });
+          }
+        }
+        
+        return res.status(200).json({ results });
+
       case 'test-credentials':
         // Test endpoint to verify credentials
         const testUrl = `${VEBRA_CONFIG.baseUrl}/branch`;
