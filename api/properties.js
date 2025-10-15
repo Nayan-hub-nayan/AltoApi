@@ -4,17 +4,10 @@
 const xml2js = require('xml2js');
 
 // Your Vebra API credentials
-// TRY BOTH SETS - You provided two different credentials
 const VEBRA_CONFIG = {
-  // OPTION 1: From email (current)
-  username: 'PropLinkEst11UHxml',  
-  password: 'y9y4Djx38r1Qaxa',     
-  
-  // OPTION 2: From first message (uncomment to try)
-  // username: 'PLE35098',
-  // password: 'X4h~srCfU5',
-  
-  datafeedId: 'PropertyLEAPI',      
+  username: 'PropLinkEst11UHxml',
+  password: 'y9y4Djx38r1Qaxa',
+  datafeedId: 'PropertyLEAPI',
   baseUrl: 'http://webservices.vebra.com/export/PropertyLEAPI/v10'
 };
 
@@ -25,7 +18,6 @@ const BRANCH_MAP = {
 };
 
 // Token storage - persists across function calls in same instance
-// Note: Vercel serverless functions may restart, losing this cache
 let tokenCache = {
   token: null,
   expires: null,
@@ -45,17 +37,13 @@ async function getToken() {
   if (tokenCache.lastError && tokenCache.lastErrorTime && 
       (Date.now() - tokenCache.lastErrorTime) < 5 * 60 * 1000) {
     console.log('Recently got 401 error, token may still be active on server');
-    throw new Error('Token request failed recently. An active token may exist on the Vebra server. Please wait 5 minutes before retrying.');
+    throw new Error('Token request failed recently. An active token may exist on the Vebra server. Please wait 5 minutes or use the set-token endpoint.');
   }
 
   console.log('Requesting new token...');
-  console.log('Username:', VEBRA_CONFIG.username);
-  console.log('Password length:', VEBRA_CONFIG.password.length);
   
   const url = `${VEBRA_CONFIG.baseUrl}/branch`;
   const credentials = Buffer.from(`${VEBRA_CONFIG.username}:${VEBRA_CONFIG.password}`).toString('base64');
-  
-  console.log('Auth string (base64):', credentials);
 
   try {
     const response = await fetch(url, {
@@ -66,40 +54,29 @@ async function getToken() {
     });
 
     console.log('Token response status:', response.status);
-    console.log('Response headers:', Object.fromEntries(response.headers.entries()));
 
     // If 401, there might be an active token already
     if (response.status === 401) {
-      console.error('Authentication failed. Status:', response.status);
-      console.error('This might mean there is already an active token on the Vebra server');
+      console.error('Authentication failed - there may be an active token already');
       
-      // Store the error time to prevent rapid retries
       tokenCache.lastError = '401 Unauthorized';
       tokenCache.lastErrorTime = Date.now();
       
-      throw new Error('Authentication failed - there may be an active token already. Vebra API only allows one token request per hour.');
+      throw new Error('Authentication failed - there may be an active token already. Vebra API only allows one token request per hour. Use the set-token endpoint to manually set a token.');
     }
 
-    // Get token from response headers (check multiple possible header names)
-    const token = response.headers.get('token') || 
-                  response.headers.get('Token') || 
-                  response.headers.get('TOKEN') ||
-                  response.headers.get('x-token') ||
-                  response.headers.get('X-Token');
+    const token = response.headers.get('token') || response.headers.get('Token');
     
     if (token) {
-      // Store token directly (it's already the token we need)
       tokenCache.token = token;
       tokenCache.expires = Date.now() + (55 * 60 * 1000); // 55 minutes
       tokenCache.lastError = null;
       tokenCache.lastErrorTime = null;
-      console.log('Token received and cached:', token);
-      console.log('Token expires at:', new Date(tokenCache.expires).toISOString());
+      console.log('Token received and cached');
       return tokenCache.token;
     }
     
-    console.error('No token in any header. All headers:', Object.fromEntries(response.headers.entries()));
-    throw new Error('No token received from API - authentication may have succeeded but no token was returned');
+    throw new Error('No token received from API');
   } catch (error) {
     console.error('Token error:', error);
     throw error;
@@ -112,7 +89,6 @@ async function fetchVebraData(endpoint) {
   const url = `${VEBRA_CONFIG.baseUrl}${endpoint}`;
 
   console.log('Fetching:', url);
-  console.log('Using token:', token);
 
   // The Vebra API expects the token in the Authorization header
   // Format: Basic base64(token:) - note the colon with empty password
@@ -129,13 +105,12 @@ async function fetchVebraData(endpoint) {
 
   if (response.status === 401) {
     console.log('Token expired, clearing cache and retrying...');
-    // Token expired, clear cache and retry once
     tokenCache.token = null;
     tokenCache.expires = null;
     
     // Retry once
     const newToken = await getToken();
-    const newEncodedToken = Buffer.from(newToken + ':').toString('base64');
+    const newEncodedToken = Buffer.from(`${newToken}:`).toString('base64');
     
     const retryResponse = await fetch(url, {
       method: 'GET',
@@ -160,8 +135,6 @@ async function fetchVebraData(endpoint) {
   }
 
   const xmlData = await response.text();
-  
-  // Convert XML to JSON
   const parser = new xml2js.Parser({ explicitArray: false });
   const jsonData = await parser.parseStringPromise(xmlData);
   
@@ -170,7 +143,7 @@ async function fetchVebraData(endpoint) {
 
 // Main handler
 export default async function handler(req, res) {
-  // Enable CORS for Framer
+  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -180,77 +153,46 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { endpoint, branchId, propertyId } = req.query;
+    const { endpoint, branchId, propertyId, token } = req.query;
 
     console.log('Request:', { endpoint, branchId, propertyId });
 
     let data;
 
     switch (endpoint) {
-      case 'test-all-credentials':
-        // Test multiple credential combinations
-        const credentialSets = [
-          {
-            name: 'Email credentials with PropertyLEAPI',
-            username: 'PropLinkEst11UHxml',
-            password: 'y9y4Djx38r1Qaxa',
-            datafeedId: 'PropertyLEAPI',
-            url: 'http://webservices.vebra.com/export/PropertyLEAPI/v10/branch'
-          },
-          {
-            name: 'First message credentials with PLEQTAPI',
-            username: 'PLE35098',
-            password: 'X4h~srCfU5',
-            datafeedId: 'PLEQTAPI',
-            url: 'http://webservices.vebra.com/export/PLEQTAPI/v10/branch'
-          },
-          {
-            name: 'Email credentials with PLEQTAPI',
-            username: 'PropLinkEst11UHxml',
-            password: 'y9y4Djx38r1Qaxa',
-            datafeedId: 'PLEQTAPI',
-            url: 'http://webservices.vebra.com/export/PLEQTAPI/v10/branch'
-          }
-        ];
-        
-        const results = [];
-        
-        for (const creds of credentialSets) {
-          const testCreds = Buffer.from(`${creds.username}:${creds.password}`).toString('base64');
-          
-          try {
-            const testResp = await fetch(creds.url, {
-              method: 'GET',
-              headers: {
-                'Authorization': `Basic ${testCreds}`
-              }
-            });
-            
-            results.push({
-              name: creds.name,
-              status: testResp.status,
-              hasToken: !!testResp.headers.get('token'),
-              token: testResp.headers.get('token')?.substring(0, 20) + '...',
-              url: creds.url
-            });
-          } catch (error) {
-            results.push({
-              name: creds.name,
-              error: error.message
-            });
-          }
+      case 'set-token':
+        // Manual token override
+        if (!token) {
+          return res.status(400).json({ error: 'token parameter required' });
         }
         
-        return res.status(200).json({ results });
+        tokenCache.token = token;
+        tokenCache.expires = Date.now() + (55 * 60 * 1000);
+        tokenCache.lastError = null;
+        tokenCache.lastErrorTime = null;
+        
+        return res.status(200).json({ 
+          success: true, 
+          message: 'Token manually set and will be used for API requests',
+          expiresAt: new Date(tokenCache.expires).toISOString()
+        });
+
+      case 'cache-status':
+        // Check current cache status
+        return res.status(200).json({
+          hasToken: !!tokenCache.token,
+          tokenPreview: tokenCache.token ? tokenCache.token.substring(0, 10) + '...' : null,
+          expiresAt: tokenCache.expires ? new Date(tokenCache.expires).toISOString() : null,
+          isExpired: tokenCache.expires ? tokenCache.expires < Date.now() : null,
+          timeUntilExpiry: tokenCache.expires ? Math.floor((tokenCache.expires - Date.now()) / 1000 / 60) + ' minutes' : null,
+          lastError: tokenCache.lastError,
+          lastErrorTime: tokenCache.lastErrorTime ? new Date(tokenCache.lastErrorTime).toISOString() : null
+        });
 
       case 'test-credentials':
         // Test endpoint to verify credentials
         const testUrl = `${VEBRA_CONFIG.baseUrl}/branch`;
         const testCreds = Buffer.from(`${VEBRA_CONFIG.username}:${VEBRA_CONFIG.password}`).toString('base64');
-        
-        console.log('Testing credentials...');
-        console.log('URL:', testUrl);
-        console.log('Username:', VEBRA_CONFIG.username);
         
         const testResponse = await fetch(testUrl, {
           method: 'GET',
@@ -259,7 +201,6 @@ export default async function handler(req, res) {
           }
         });
         
-        const allHeaders = Object.fromEntries(testResponse.headers.entries());
         const hasToken = !!testResponse.headers.get('token');
         
         return res.status(200).json({
@@ -267,26 +208,18 @@ export default async function handler(req, res) {
           statusText: testResponse.statusText,
           hasToken: hasToken,
           token: hasToken ? testResponse.headers.get('token') : null,
-          headers: allHeaders,
-          credentials: {
-            username: VEBRA_CONFIG.username,
-            passwordLength: VEBRA_CONFIG.password.length,
-            datafeedId: VEBRA_CONFIG.datafeedId
-          }
+          message: hasToken ? 'Token received! Use set-token endpoint to cache it.' : 'No token received'
         });
 
       case 'branches':
-        // Get list of branches
         data = await fetchVebraData('/branch');
         break;
 
       case 'properties':
-        // Get properties for a specific branch
         if (!branchId) {
           return res.status(400).json({ error: 'branchId required (1 for Lettings, 2 for Sales)' });
         }
         
-        // Map branchId to clientId
         const clientId = BRANCH_MAP[branchId];
         if (!clientId) {
           return res.status(400).json({ error: 'Invalid branchId. Use 1 for Lettings or 2 for Sales' });
@@ -297,7 +230,6 @@ export default async function handler(req, res) {
         break;
 
       case 'property':
-        // Get single property details
         if (!propertyId) {
           return res.status(400).json({ error: 'propertyId required' });
         }
@@ -305,7 +237,6 @@ export default async function handler(req, res) {
         break;
 
       case 'property-files':
-        // Get property files (images, floorplans, etc)
         if (!propertyId) {
           return res.status(400).json({ error: 'propertyId required' });
         }
@@ -315,7 +246,16 @@ export default async function handler(req, res) {
       default:
         return res.status(400).json({ 
           error: 'Invalid endpoint',
-          available: ['branches', 'properties', 'property', 'property-files']
+          available: ['set-token', 'cache-status', 'test-credentials', 'branches', 'properties', 'property', 'property-files'],
+          usage: {
+            'set-token': '?endpoint=set-token&token=YOUR_TOKEN',
+            'cache-status': '?endpoint=cache-status',
+            'test-credentials': '?endpoint=test-credentials',
+            'branches': '?endpoint=branches',
+            'properties': '?endpoint=properties&branchId=1',
+            'property': '?endpoint=property&propertyId=12345',
+            'property-files': '?endpoint=property-files&propertyId=12345'
+          }
         });
     }
 
@@ -325,8 +265,7 @@ export default async function handler(req, res) {
     console.error('API Error:', error);
     return res.status(500).json({ 
       error: 'Failed to fetch data',
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      message: error.message
     });
   }
 }
